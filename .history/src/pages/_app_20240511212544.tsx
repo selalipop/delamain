@@ -3,6 +3,7 @@ import type { AppProps } from "next/app";
 import { Theme } from "@radix-ui/themes";
 import "@radix-ui/themes/styles.css";
 
+import type { AppProps } from "next/app";
 import dynamic from "next/dynamic";
 import React from "react";
 
