@@ -31,6 +31,9 @@ export const useImageTranscription = (sampleTime : number) => {
     if (isStreaming) {
       interval = setInterval(captureImage, sampleTime);
     }
+    setTimeout(() => {
+      captureImage()//capture image after 500ms
+    }, 500)
     return () => clearInterval(interval);
   }, [isStreaming]);
 

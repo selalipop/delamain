@@ -8,7 +8,7 @@ import React from "react";
 
 const App = ({ Component, pageProps }: AppProps) => {
   return (
-    <Theme scaling="110%">
+    <Theme scaling="110%" >
       <Component {...pageProps} />
     </Theme>
   );

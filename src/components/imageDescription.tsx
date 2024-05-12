@@ -1,5 +1,14 @@
-import React, { useEffect } from "react";
-import { Button, Container, Flex, Text } from "@radix-ui/themes";
+import React, { useEffect, useRef } from "react";
+import {
+  Button,
+  Card,
+  Container,
+  Flex,
+  Text,
+  ScrollArea,
+  DataList,
+  Badge,
+} from "@radix-ui/themes";
 import { useImageTranscription } from "./useImageTranscription";
 import OpenAI from "openai";
 import { useMicVAD, utils } from "@ricky0123/vad-react";
@@ -11,12 +20,22 @@ export const extractOutermostJSON = (input: string): string | null => {
   const match = input.match(/{[^{}]*(?:{[^{}]*}[^{}]*)*}/);
   return match ? match[0].trim() : null;
 };
-
+import {
+  initialize,
+  SessionManager,
+  DecodingOptionsBuilder,
+  Segment,
+  AvailableModels,
+  Task,
+  InferenceSession,
+} from "whisper-turbo";
 const openai = new OpenAI({
   apiKey: process.env["NEXT_PUBLIC_OPENAI_API_KEY"], // This is the default and can be omitted
   dangerouslyAllowBrowser: true,
 });
 import { AssemblyAI } from "assemblyai";
+import { playTextToSpeech } from "./tts";
+import { analyzeImage } from "./peopleAnalysis";
 
 const client = new AssemblyAI({
   apiKey: "437df76c4015423c825fa9d816e10ba9",
@@ -25,20 +44,20 @@ const client = new AssemblyAI({
 const REGION = "us-east-1"; // e.g. "us-east-1"
 const BUCKET_NAME = "delamain-transcripts"; // Replace with your bucket name
 const transcriber = client.realtime.transcriber({
-  sampleRate: 16_000
-})
+  sampleRate: 16_000,
+});
 
-transcriber.on('open', ({ sessionId }) => {
-  console.log(`Session opened with ID: ${sessionId}`)
-})
+transcriber.on("open", ({ sessionId }) => {
+  console.log(`Session opened with ID: ${sessionId}`);
+});
 
-transcriber.on('error', (error: Error) => {
-  console.error('Error:', error)
-})
+transcriber.on("error", (error: Error) => {
+  console.error("Error:", error);
+});
 
-transcriber.on('close', (code: number, reason: string) => {
-  console.log('Session closed:', code, reason)
-})
+transcriber.on("close", (code: number, reason: string) => {
+  console.log("Session closed:", code, reason);
+});
 const s3Client = new S3Client({
   region: REGION,
   credentials: {
@@ -52,26 +71,57 @@ AWS.config.update({
   region: REGION,
 });
 
-const corsConfig = {
-  CORSRules: [
-    {
-      AllowedOrigins: ["*"],
-      AllowedMethods: ["GET", "PUT", "POST", "DELETE"],
-      AllowedHeaders: ["*"],
-      ExposeHeaders: [],
-      MaxAgeSeconds: 3000,
-    },
-  ],
-};
-
-async function main() {
-  const chatCompletion = await openai.chat.completions.create({
-    messages: [{ role: "user", content: "Say this is a test" }],
-    model: "gpt-4-turbo-preview",
-  });
-}
-
 const startTime = new Date().getTime();
+function ObservationCard({
+  isStreaming,
+  peopleEmotions,
+  peopleFaces,
+  peopleInfo,
+  peoplePose,
+}: {
+  isStreaming: boolean;
+  peopleEmotions: string;
+  peopleFaces: string;
+  peopleInfo: string;
+  peoplePose: string;
+}) {
+  return (
+    <Card>
+      <DataList.Root>
+        <DataList.Item align="center">
+          <DataList.Label minWidth="88px">Status</DataList.Label>
+          <DataList.Value>
+            {isStreaming ? (
+              <Badge color="jade" variant="soft" radius="full">
+                Observing
+              </Badge>
+            ) : (
+              <Badge color="red" variant="soft" radius="full">
+                Not Observing
+              </Badge>
+            )}
+          </DataList.Value>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.Label minWidth="88px">Emotions</DataList.Label>
+          <DataList.Value>{peopleEmotions}</DataList.Value>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.Label minWidth="88px">Faces Detected</DataList.Label>
+          <DataList.Value>{peopleFaces}</DataList.Value>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.Label minWidth="88px">Person Information</DataList.Label>
+          <DataList.Value>{peopleInfo}</DataList.Value>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.Label minWidth="88px">Estimated Pose</DataList.Label>
+          <DataList.Value>{peoplePose}</DataList.Value>
+        </DataList.Item>
+      </DataList.Root>
+    </Card>
+  );
+}
 const ImageDescription: React.FC = () => {
   const {
     videoRef,
@@ -81,57 +131,89 @@ const ImageDescription: React.FC = () => {
     stopStreaming,
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
+  const [thoughts, setThoughts] = React.useState([] as any[]);
   useEffect(() => {
-    
+    if (history.at(-1)?.event === "user_spoke") {
+      return;
+    }
     setHistory((prev) => [
       ...prev,
       {
         event: "time_elapsed",
         time: `${(new Date().getTime() - startTime) / 1000} seconds`,
-        details: `Your AI companion who observes on your behalf observed the enviornment and saw ${
-          imageDescription ?? "nothing interesting"
-        }. DO NOT SPEAK UNLESS AT LEAST 30 SECONDS HAVE PASSED SINCE THE LAST USER_SPOKE EVENT!!! THIS IS AN INTERNAL EVENT!!!`,
+        details: `Some time has passed. Do not speak unless at least 30 seconds have passed since the last user_spoke event. This is an internal event.`,
       },
     ]);
   }, [imageDescription]);
   const vad = useMicVAD({
+    positiveSpeechThreshold: 0.9,
+    negativeSpeechThreshold: 0.5,
     onSpeechEnd: async (audio) => {
+      if (!session) {
+        return;
+      }
       const arrayBuffer = utils.encodeWAV(audio);
       const base64 = utils.arrayBufferToBase64(arrayBuffer);
       const url = `data:audio/wav;base64,${base64}`;
 
-      const blob = new Blob([arrayBuffer], { type: "wav" });
-      const params = {
-        Bucket: BUCKET_NAME,
-        Key: "transcript-" + new Date().getTime() + ".wav",
-        Body: blob,
-        ContentType: "wav",
-      };
-      const s3 = new AWS.S3();
+      let options = new DecodingOptionsBuilder()
+        .setTask(Task.Transcribe)
+        .build();
 
-      const result = await s3.upload(params).promise();
-
-      const transcript = await client.transcripts.create({
-        audio_url: result.Location,
-      });
-      console.log("Transcript", transcript);
+      let text = "";
+      await session.transcribe(
+        new Uint8Array(arrayBuffer),
+        true,
+        options,
+        (segment: Segment) => {
+          text += segment.text;
+        }
+      );
+      console.log("Transcript", text);
       setHistory((prev) => [
         ...prev,
         {
           event: "user_spoke",
           time: getElapsedTime(),
-          details: `${transcript.text} was spoken by the user`,
+          details: `${text} was spoken by the user. The current scene is ${imageDescription}`,
         },
       ]);
     },
   });
+  const [session, setSession] = React.useState(null as InferenceSession | null);
   const [messages, setMessages] = React.useState([] as string[]);
+  const abortRef = useRef<AbortController | null>(null);
+  const [lastAddressedHistoryIndex, setLastAddressedHistoryIndex] =
+    React.useState(-1);
   useAsyncEffect(async () => {
-    if (history.at(-1)?.event === "you_spoke_to_user") {
+    await initialize();
+    const session = await new SessionManager().loadModel(
+      AvailableModels.WHISPER_BASE,
+      () => {
+        console.log("Model loaded successfully");
+      },
+      (p: number) => {
+        console.log(`Loading: ${p}%`);
+      }
+    );
+    if (!session.isOk) {
+      console.error("Failed to load model", session.error);
+      return;
+    }
+    setSession(session.value);
+  }, []);
+  useAsyncEffect(async () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const abort = new AbortController();
+    abortRef.current = abort;
+
+    if (!history.slice(0, lastAddressedHistoryIndex)) {
+      console.log("No new events to process");
       return;
     }
 
-    const abort = new AbortController();
     const messageList = [
       {
         role: "system",
@@ -154,49 +236,86 @@ const ImageDescription: React.FC = () => {
               Wait for the user to speak with user_spoke before you ever respond. You can't respond to the user until they've spoken.
 
               You must adhere to the user_spoke/you_spoke cadence. You can't speak to the user until they've spoken to you.
+
+              You avoid drilling to deep into their personal lives, sometimes it's ok to just make a quip and end things there.
+
+              You're also acting as Harry Potter, so make quips and references to the Harry Potter franchise. Your internal thoughts and speech should reflect this.
               `,
       },
       {
         role: "user",
         content: `These are the events that happened so far: \n${history
+          .filter((h) => h.event !== "you_spoke_to_user")
           .map((h, i) => `${i}. ${h.event} (${h.details}) occured at ${h.time}`)
-          .join("\n")}`,
+          .join("\n")}
+          The most recent thing you said to the rider was ${messages.at(-1)}`,
       },
     ];
     console.log("Sending request", messageList);
+
+    if (abort.signal.aborted) {
+      return;
+    }
     const chatCompletion = await openai.chat.completions.create({
       messages: messageList,
       model: "gpt-4-turbo-preview",
       response_format: { type: "json_object" },
     });
-    
 
-    if (!abort.signal.aborted) {
-      const content = chatCompletion.choices[0].message.content;
-      const jsonString = extractOutermostJSON(content!);
-      const parsed = JSON.parse(jsonString!);
-      console.log("Received response", parsed);
-      setHistory((prev) => [
-        ...prev,
-        {
-          event: "you_spoke_to_user",
-          time: `${(new Date().getTime() - startTime) / 1000} seconds`,
-          details: `You spoke to the user and said ${parsed.speak}`,
-        },
-      ]);
-      if (parsed.speak) {
-        setMessages((prev) => [...prev, parsed.speak]);
-      }
+    if (abort.signal.aborted) {
+      console.log("Aborted");
+      return;
     }
+    const content = chatCompletion.choices[0].message.content;
+    const jsonString = extractOutermostJSON(content!);
+    const parsed = JSON.parse(jsonString!);
+    console.log("Received response", parsed);
+
+    if (abort.signal.aborted) {
+      console.log("Aborted");
+      return;
+    }
+    setThoughts((prev) => [...prev, parsed.internalThoughts]);
+    if (parsed.speak) {
+      setMessages((prev) => [...prev, parsed.speak]);
+    }
+    if (parsed.speak) {
+      playTextToSpeech(parsed.speak, "weight_2qbzp2nmrbbsxrxq7m53y4zan")
+        .then(() => console.log("Audio is playing"))
+        .catch((error) => console.error("Error:", error));
+    }
+    setLastAddressedHistoryIndex(history.length);
     return () => {
       abort.abort();
     };
   }, [history]);
-
+  const { peopleEmotions, peopleFaces, peopleInfo, peoplePose } =
+    analyzeImage(imageDescription);
   return (
-    <div className="w-full h-full">
+    <div className="w-full h-full m-5">
       <Container mx="2">
-        <video ref={videoRef} autoPlay playsInline muted />
+        <Flex height={"30rem"} position={"relative"}>
+          <div className="w-full h-full m-3" style={{ borderRadius: "1rem" }}>
+            <Flex justify={"center"} height={"100%"} align={"center"}>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{ borderRadius: "1rem" }}
+              />
+            </Flex>
+          </div>
+          <div className="w-full h-full">
+            <ScrollArea className="h-full w-full">
+              <Flex direction={"column-reverse"} gap={"3"}>
+                {thoughts.map((t, i) => (
+                  <Card key={i} className={i == thoughts.length - 1 ? "animate-pulse" : ""}>{t}</Card>
+                ))}
+              </Flex>
+            </ScrollArea>
+          </div>
+        </Flex>
         <Flex className="w-full" justify={"center"} gap="3">
           <Button
             onClick={startStreaming}
@@ -213,10 +332,16 @@ const ImageDescription: React.FC = () => {
             Stop
           </Button>
         </Flex>
-        <div>{imageDescription}</div>
+        <ObservationCard
+          isStreaming={isStreaming}
+          peopleEmotions={peopleEmotions}
+          peopleFaces={peopleFaces}
+          peopleInfo={peopleInfo}
+          peoplePose={peoplePose}
+        />
         <Flex direction={"column"}>
           {messages.map((m, i) => (
-            <Text key={i}>{m}</Text>
+            <Card key={i}>{m}</Card>
           ))}
         </Flex>
       </Container>
