@@ -82,7 +82,9 @@ const ImageDescription: React.FC = () => {
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
   useEffect(() => {
-    
+    await transcriber.connect()
+
+
     setHistory((prev) => [
       ...prev,
       {

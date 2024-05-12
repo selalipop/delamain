@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Button, Container, Flex, Text } from "@radix-ui/themes";
+import { Button, Container, Flex,Text } from "@radix-ui/themes";
 import { useImageTranscription } from "./useImageTranscription";
 import OpenAI from "openai";
 import { useMicVAD, utils } from "@ricky0123/vad-react";
@@ -24,21 +24,7 @@ const client = new AssemblyAI({
 
 const REGION = "us-east-1"; // e.g. "us-east-1"
 const BUCKET_NAME = "delamain-transcripts"; // Replace with your bucket name
-const transcriber = client.realtime.transcriber({
-  sampleRate: 16_000
-})
 
-transcriber.on('open', ({ sessionId }) => {
-  console.log(`Session opened with ID: ${sessionId}`)
-})
-
-transcriber.on('error', (error: Error) => {
-  console.error('Error:', error)
-})
-
-transcriber.on('close', (code: number, reason: string) => {
-  console.log('Session closed:', code, reason)
-})
 const s3Client = new S3Client({
   region: REGION,
   credentials: {
@@ -82,15 +68,12 @@ const ImageDescription: React.FC = () => {
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
   useEffect(() => {
-    
     setHistory((prev) => [
       ...prev,
       {
         event: "time_elapsed",
         time: `${(new Date().getTime() - startTime) / 1000} seconds`,
-        details: `Your AI companion who observes on your behalf observed the enviornment and saw ${
-          imageDescription ?? "nothing interesting"
-        }. DO NOT SPEAK UNLESS AT LEAST 30 SECONDS HAVE PASSED SINCE THE LAST USER_SPOKE EVENT!!! THIS IS AN INTERNAL EVENT!!!`,
+        details: `Your AI companion who observes on your behalf observed the enviornment and saw ${imageDescription ?? "nothing interesting"}. DO NOT SPEAK UNLESS AT LEAST 30 SECONDS HAVE PASSED SINCE THE LAST USER_SPOKE EVENT!!! THIS IS AN INTERNAL EVENT!!!`,
       },
     ]);
   }, [imageDescription]);
@@ -125,7 +108,7 @@ const ImageDescription: React.FC = () => {
       ]);
     },
   });
-  const [messages, setMessages] = React.useState([] as string[]);
+  const [messages, setMessages] = React.useState([] as string[]) ;
   useAsyncEffect(async () => {
     if (history.at(-1)?.event === "you_spoke_to_user") {
       return;
@@ -158,22 +141,20 @@ const ImageDescription: React.FC = () => {
       },
       {
         role: "user",
-        content: `These are the events that happened so far: \n${history
-          .map((h, i) => `${i}. ${h.event} (${h.details}) occured at ${h.time}`)
-          .join("\n")}`,
+        content: `These are the events that happened so far: \n${history.map(
+          (h, i) => `${i}. ${h.event} (${h.details}) occured at ${h.time}`
+        ).join("\n")}`,
       },
     ];
     console.log("Sending request", messageList);
     const chatCompletion = await openai.chat.completions.create({
       messages: messageList,
-      model: "gpt-4-turbo-preview",
-      response_format: { type: "json_object" },
+      model: "gpt-3.5-turbo",
     });
     
-
     if (!abort.signal.aborted) {
       const content = chatCompletion.choices[0].message.content;
-      const jsonString = extractOutermostJSON(content!);
+      const jsonString = extractOutermostJSON(content!)
       const parsed = JSON.parse(jsonString!);
       console.log("Received response", parsed);
       setHistory((prev) => [
@@ -184,8 +165,8 @@ const ImageDescription: React.FC = () => {
           details: `You spoke to the user and said ${parsed.speak}`,
         },
       ]);
-      if (parsed.speak) {
-        setMessages((prev) => [...prev, parsed.speak]);
+      if(parsed.speak) {
+      setMessages((prev) => [...prev, parsed.speak]);
       }
     }
     return () => {
@@ -214,11 +195,7 @@ const ImageDescription: React.FC = () => {
           </Button>
         </Flex>
         <div>{imageDescription}</div>
-        <Flex direction={"column"}>
-          {messages.map((m, i) => (
-            <Text key={i}>{m}</Text>
-          ))}
-        </Flex>
+        <div>{messages.map((m, i) => (<Text key={i}>{m}</Text>))}</div>
       </Container>
     </div>
   );
@@ -228,3 +205,4 @@ export default ImageDescription;
 function getElapsedTime() {
   return `${(new Date().getTime() - startTime) / 1000} seconds`;
 }
+

@@ -28,17 +28,7 @@ const transcriber = client.realtime.transcriber({
   sampleRate: 16_000
 })
 
-transcriber.on('open', ({ sessionId }) => {
-  console.log(`Session opened with ID: ${sessionId}`)
-})
 
-transcriber.on('error', (error: Error) => {
-  console.error('Error:', error)
-})
-
-transcriber.on('close', (code: number, reason: string) => {
-  console.log('Session closed:', code, reason)
-})
 const s3Client = new S3Client({
   region: REGION,
   credentials: {
@@ -82,7 +72,6 @@ const ImageDescription: React.FC = () => {
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
   useEffect(() => {
-    
     setHistory((prev) => [
       ...prev,
       {

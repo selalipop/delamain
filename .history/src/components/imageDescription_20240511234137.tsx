@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Button, Container, Flex, Text } from "@radix-ui/themes";
+import { Button, Container, Flex } from "@radix-ui/themes";
 import { useImageTranscription } from "./useImageTranscription";
 import OpenAI from "openai";
 import { useMicVAD, utils } from "@ricky0123/vad-react";
@@ -7,10 +7,6 @@ import { set } from "date-fns";
 import { useAsyncEffect } from "use-async-effect";
 import { S3Client, PutBucketCorsCommand } from "@aws-sdk/client-s3";
 import AWS from "aws-sdk";
-export const extractOutermostJSON = (input: string): string | null => {
-  const match = input.match(/{[^{}]*(?:{[^{}]*}[^{}]*)*}/);
-  return match ? match[0].trim() : null;
-};
 
 const openai = new OpenAI({
   apiKey: process.env["NEXT_PUBLIC_OPENAI_API_KEY"], // This is the default and can be omitted
@@ -24,21 +20,7 @@ const client = new AssemblyAI({
 
 const REGION = "us-east-1"; // e.g. "us-east-1"
 const BUCKET_NAME = "delamain-transcripts"; // Replace with your bucket name
-const transcriber = client.realtime.transcriber({
-  sampleRate: 16_000
-})
 
-transcriber.on('open', ({ sessionId }) => {
-  console.log(`Session opened with ID: ${sessionId}`)
-})
-
-transcriber.on('error', (error: Error) => {
-  console.error('Error:', error)
-})
-
-transcriber.on('close', (code: number, reason: string) => {
-  console.log('Session closed:', code, reason)
-})
 const s3Client = new S3Client({
   region: REGION,
   credentials: {
@@ -79,18 +61,15 @@ const ImageDescription: React.FC = () => {
     isStreaming,
     startStreaming,
     stopStreaming,
-  } = useImageTranscription(10000);
+  } = useImageTranscription(5000);
   const [history, setHistory] = React.useState([] as any[]);
   useEffect(() => {
-    
     setHistory((prev) => [
       ...prev,
       {
-        event: "time_elapsed",
+        event: "time_passed",
         time: `${(new Date().getTime() - startTime) / 1000} seconds`,
-        details: `Your AI companion who observes on your behalf observed the enviornment and saw ${
-          imageDescription ?? "nothing interesting"
-        }. DO NOT SPEAK UNLESS AT LEAST 30 SECONDS HAVE PASSED SINCE THE LAST USER_SPOKE EVENT!!! THIS IS AN INTERNAL EVENT!!!`,
+        details: `You observed the enviornment and saw ${imageDescription ?? "nothing interesting"}`,
       },
     ]);
   }, [imageDescription]);
@@ -125,7 +104,7 @@ const ImageDescription: React.FC = () => {
       ]);
     },
   });
-  const [messages, setMessages] = React.useState([] as string[]);
+  const [message, setMessage] = React.useState("");
   useAsyncEffect(async () => {
     if (history.at(-1)?.event === "you_spoke_to_user") {
       return;
@@ -140,7 +119,7 @@ const ImageDescription: React.FC = () => {
 
               Then you reply in JSON with the following:
               - timePassedSinceUserSpoke, the time that has passed since the user speaking (The current time is ${getElapsedTime()})
-              - internalThoughts, internal thoughts processing what was provided to you. Think about what the user is doing. Are they looking at you? Looking outside? Busy?
+              - internalThoughts, internal thoughts processing what was provided to you
               - allowedToSpeak, only true if the user spoke to you and you have not spoken back, false otherwise. For example, if you spoke to the user, you can't speak until at least 30 seconds have passed or they speak to you again
               - willSpeak, true if you will speak, false if the situation doesn't call for speaking
               - speak, what you're going to speak with the user and say. You can make quips, ask questions, generally be personable.
@@ -148,7 +127,7 @@ const ImageDescription: React.FC = () => {
               You've got a little bit of an edge, and you note the passage of time. For example, you notice if someone is silent, you engage more if they seem chatty, etc.
               You get a couple of events that represent the rider's actions and the environment, and you're going to respond to them.
               - user_spoke, the rider spoke to you
-              - time_elapsed, this is a special event that simply indicates time that has passed since the last event
+              - time_passed, the time that has passed since the last event
               - you_spoke_to_user, you spoke to the user
               
               Wait for the user to speak with user_spoke before you ever respond. You can't respond to the user until they've spoken.
@@ -158,35 +137,27 @@ const ImageDescription: React.FC = () => {
       },
       {
         role: "user",
-        content: `These are the events that happened so far: \n${history
-          .map((h, i) => `${i}. ${h.event} (${h.details}) occured at ${h.time}`)
-          .join("\n")}`,
+        content: `These are the events that happened so far: \n${history.map(
+          (h, i) => `${i}. ${h.event} (${h.details}) occured at ${h.time}`
+        ).join("\n")}`,
       },
     ];
     console.log("Sending request", messageList);
     const chatCompletion = await openai.chat.completions.create({
       messages: messageList,
-      model: "gpt-4-turbo-preview",
-      response_format: { type: "json_object" },
+      model: "gpt-3.5-turbo",
     });
-    
-
     if (!abort.signal.aborted) {
       const content = chatCompletion.choices[0].message.content;
-      const jsonString = extractOutermostJSON(content!);
-      const parsed = JSON.parse(jsonString!);
-      console.log("Received response", parsed);
       setHistory((prev) => [
         ...prev,
         {
           event: "you_spoke_to_user",
           time: `${(new Date().getTime() - startTime) / 1000} seconds`,
-          details: `You spoke to the user and said ${parsed.speak}`,
+          details: `You spoke to the user and said ${content}`,
         },
       ]);
-      if (parsed.speak) {
-        setMessages((prev) => [...prev, parsed.speak]);
-      }
+      setMessage(content ?? "No Message");
     }
     return () => {
       abort.abort();
@@ -214,11 +185,7 @@ const ImageDescription: React.FC = () => {
           </Button>
         </Flex>
         <div>{imageDescription}</div>
-        <Flex direction={"column"}>
-          {messages.map((m, i) => (
-            <Text key={i}>{m}</Text>
-          ))}
-        </Flex>
+        <div>{message}</div>
       </Container>
     </div>
   );
@@ -228,3 +195,4 @@ export default ImageDescription;
 function getElapsedTime() {
   return `${(new Date().getTime() - startTime) / 1000} seconds`;
 }
+

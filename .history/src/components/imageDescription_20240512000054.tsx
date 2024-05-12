@@ -127,6 +127,15 @@ const ImageDescription: React.FC = () => {
   });
   const [messages, setMessages] = React.useState([] as string[]);
   useAsyncEffect(async () => {
+    await transcriber.connect()
+    transcriber.on('transcription', (data) => {
+      console.log('Transcription:', data.text)
+    })
+    return () => {
+      transcriber.close()
+    }
+  }, []);
+  useAsyncEffect(async () => {
     if (history.at(-1)?.event === "you_spoke_to_user") {
       return;
     }

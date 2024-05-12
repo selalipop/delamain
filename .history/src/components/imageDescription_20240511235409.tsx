@@ -24,21 +24,7 @@ const client = new AssemblyAI({
 
 const REGION = "us-east-1"; // e.g. "us-east-1"
 const BUCKET_NAME = "delamain-transcripts"; // Replace with your bucket name
-const transcriber = client.realtime.transcriber({
-  sampleRate: 16_000
-})
 
-transcriber.on('open', ({ sessionId }) => {
-  console.log(`Session opened with ID: ${sessionId}`)
-})
-
-transcriber.on('error', (error: Error) => {
-  console.error('Error:', error)
-})
-
-transcriber.on('close', (code: number, reason: string) => {
-  console.log('Session closed:', code, reason)
-})
 const s3Client = new S3Client({
   region: REGION,
   credentials: {
@@ -82,7 +68,6 @@ const ImageDescription: React.FC = () => {
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
   useEffect(() => {
-    
     setHistory((prev) => [
       ...prev,
       {
@@ -169,7 +154,6 @@ const ImageDescription: React.FC = () => {
       model: "gpt-4-turbo-preview",
       response_format: { type: "json_object" },
     });
-    
 
     if (!abort.signal.aborted) {
       const content = chatCompletion.choices[0].message.content;

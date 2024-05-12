@@ -39,6 +39,9 @@ transcriber.on('error', (error: Error) => {
 transcriber.on('close', (code: number, reason: string) => {
   console.log('Session closed:', code, reason)
 })
+await transcriber.connect()
+
+
 const s3Client = new S3Client({
   region: REGION,
   credentials: {
@@ -82,7 +85,6 @@ const ImageDescription: React.FC = () => {
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
   useEffect(() => {
-    
     setHistory((prev) => [
       ...prev,
       {
