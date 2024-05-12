@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -8,6 +8,7 @@ import {
   ScrollArea,
   DataList,
   Badge,
+  Heading,
 } from "@radix-ui/themes";
 import { useImageTranscription } from "./useImageTranscription";
 import OpenAI from "openai";
@@ -78,12 +79,14 @@ function ObservationCard({
   peopleFaces,
   peopleInfo,
   peoplePose,
+  mostRecentUtterance
 }: {
   isStreaming: boolean;
   peopleEmotions: string;
   peopleFaces: string;
   peopleInfo: string;
   peoplePose: string;
+  mostRecentUtterance: string;
 }) {
   return (
     <Card>
@@ -118,6 +121,10 @@ function ObservationCard({
           <DataList.Label minWidth="88px">Estimated Pose</DataList.Label>
           <DataList.Value>{peoplePose}</DataList.Value>
         </DataList.Item>
+        <DataList.Item>
+          <DataList.Label minWidth="88px">Most Recent Utterance</DataList.Label>
+          <DataList.Value>{mostRecentUtterance}</DataList.Value>
+        </DataList.Item>
       </DataList.Root>
     </Card>
   );
@@ -131,6 +138,7 @@ const ImageDescription: React.FC = () => {
     stopStreaming,
   } = useImageTranscription(10000);
   const [history, setHistory] = React.useState([] as any[]);
+  const [fullHistory, setFullHistory] = React.useState([] as any[]);
   const [thoughts, setThoughts] = React.useState([] as any[]);
   useEffect(() => {
     if (history.at(-1)?.event === "user_spoke") {
@@ -144,7 +152,16 @@ const ImageDescription: React.FC = () => {
         details: `Some time has passed. Do not speak unless at least 30 seconds have passed since the last user_spoke event. This is an internal event.`,
       },
     ]);
+    setFullHistory((prev) => [
+      ...prev,
+      {
+        event: "time_elapsed",
+        time: `${(new Date().getTime() - startTime) / 1000} seconds`,
+        details: `Some time has passed. Do not speak unless at least 30 seconds have passed since the last user_spoke event. This is an internal event.`,
+      },
+    ]);
   }, [imageDescription]);
+  const [mostRecentUtterance, setMostRecentUtterance] = React.useState("");
   const vad = useMicVAD({
     positiveSpeechThreshold: 0.9,
     negativeSpeechThreshold: 0.5,
@@ -158,6 +175,8 @@ const ImageDescription: React.FC = () => {
 
       let options = new DecodingOptionsBuilder()
         .setTask(Task.Transcribe)
+        .setPrompt("Transcribe the audio, it's always in english.")
+        .setTemperature(0.3)
         .build();
 
       let text = "";
@@ -170,7 +189,16 @@ const ImageDescription: React.FC = () => {
         }
       );
       console.log("Transcript", text);
+      setMostRecentUtterance(text);
       setHistory((prev) => [
+        ...prev,
+        {
+          event: "user_spoke",
+          time: getElapsedTime(),
+          details: `${text} was spoken by the user. The current scene is ${imageDescription}`,
+        },
+      ]);
+      setFullHistory((prev) => [
         ...prev,
         {
           event: "user_spoke",
@@ -180,6 +208,9 @@ const ImageDescription: React.FC = () => {
       ]);
     },
   });
+  useEffect(() => {
+    console.log("Full History", fullHistory);
+  }, [fullHistory]);
   const [session, setSession] = React.useState(null as InferenceSession | null);
   const [messages, setMessages] = React.useState([] as string[]);
   const abortRef = useRef<AbortController | null>(null);
@@ -202,6 +233,16 @@ const ImageDescription: React.FC = () => {
     }
     setSession(session.value);
   }, []);
+  const [character, setCharacter] = useState("potter");
+  const characters = new Map(
+    [
+      ["potter", {
+          prompt: "You're also acting as Harry Potter, so make quips and references to the Harry Potter franchise.",
+          avatar: "https://ik.imagekit.io/x2dirkim6/PromoHP7_Harry_Potter.webp?updatedAt=1715527532873",
+          voiceId: "weight_2qbzp2nmrbbsxrxq7m53y4zan"
+      }],
+    ]
+  )
   useAsyncEffect(async () => {
     if (abortRef.current) {
       abortRef.current.abort();
@@ -213,7 +254,7 @@ const ImageDescription: React.FC = () => {
       console.log("No new events to process");
       return;
     }
-
+   
     const messageList = [
       {
         role: "system",
@@ -222,7 +263,7 @@ const ImageDescription: React.FC = () => {
 
               Then you reply in JSON with the following:
               - timePassedSinceUserSpoke, the time that has passed since the user speaking (The current time is ${getElapsedTime()})
-              - internalThoughts, internal thoughts processing what was provided to you. Think about what the user is doing. Are they looking at you? Looking outside? Busy?
+              - internalThoughts, internal thoughts processing what was provided to you. Think about what the user is doing. Are they looking at you? Looking outside? Busy? Remember that their words are being transcribed, seamlessly re-interpret any likely mistranscriptions
               - allowedToSpeak, only true if the user spoke to you and you have not spoken back, false otherwise. For example, if you spoke to the user, you can't speak until at least 30 seconds have passed or they speak to you again
               - willSpeak, true if you will speak, false if the situation doesn't call for speaking
               - speak, what you're going to speak with the user and say. You can make quips, ask questions, generally be personable.
@@ -239,7 +280,7 @@ const ImageDescription: React.FC = () => {
 
               You avoid drilling to deep into their personal lives, sometimes it's ok to just make a quip and end things there.
 
-              You're also acting as Harry Potter, so make quips and references to the Harry Potter franchise. Your internal thoughts and speech should reflect this.
+              ${characters.get(character)?.prompt} Your internal thoughts and speech should reflect this.
               `,
       },
       {
@@ -283,8 +324,26 @@ const ImageDescription: React.FC = () => {
       playTextToSpeech(parsed.speak, "weight_2qbzp2nmrbbsxrxq7m53y4zan")
         .then(() => console.log("Audio is playing"))
         .catch((error) => console.error("Error:", error));
+      setFullHistory((prev) => [
+        ...prev,
+        {
+          event: "you_spoke_to_user",
+          time: getElapsedTime(),
+          details: `${parsed.speak} was spoken to the user. The current scene is ${imageDescription}`,
+        },
+      ]);
+    } else {
+      setFullHistory((prev) => [
+        ...prev,
+        {
+          event: "you_spoke_to_user",
+          time: getElapsedTime(),
+          details: `${parsed.internalThoughts} was thought ${imageDescription}`,
+        },
+      ]);
     }
     setLastAddressedHistoryIndex(history.length);
+
     return () => {
       abort.abort();
     };
@@ -294,55 +353,74 @@ const ImageDescription: React.FC = () => {
   return (
     <div className="w-full h-full m-5">
       <Container mx="2">
-        <Flex height={"30rem"} position={"relative"}>
-          <div className="w-full h-full m-3" style={{ borderRadius: "1rem" }}>
-            <Flex justify={"center"} height={"100%"} align={"center"}>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{ borderRadius: "1rem" }}
-              />
-            </Flex>
-          </div>
-          <div className="w-full h-full">
-            <ScrollArea className="h-full w-full">
-              <Flex direction={"column-reverse"} gap={"3"}>
-                {thoughts.map((t, i) => (
-                  <Card key={i} className={i == thoughts.length - 1 ? "animate-pulse" : ""}>{t}</Card>
-                ))}
+        <Flex direction={"column"} gap="3" height={"100%"}>
+          <Flex
+            height={"45rem"}
+            position={"relative"}
+            gap="3"
+            overflow={"clip"}
+          >
+            <div className="w-full h-full p-3" style={{ borderRadius: "1rem" }}>
+              <Flex justify={"center"} height={"100%"} align={"center"} direction={"column"}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{ borderRadius: "1rem" }}
+                />
+                <img style={{height:"10rem"}} src={characters.get(character)?.avatar}></img>
               </Flex>
-            </ScrollArea>
-          </div>
-        </Flex>
-        <Flex className="w-full" justify={"center"} gap="3">
-          <Button
-            onClick={startStreaming}
-            disabled={isStreaming}
-            variant="surface"
-          >
-            Start
-          </Button>
-          <Button
-            onClick={stopStreaming}
-            disabled={!isStreaming}
-            variant="surface"
-          >
-            Stop
-          </Button>
-        </Flex>
-        <ObservationCard
-          isStreaming={isStreaming}
-          peopleEmotions={peopleEmotions}
-          peopleFaces={peopleFaces}
-          peopleInfo={peopleInfo}
-          peoplePose={peoplePose}
-        />
-        <Flex direction={"column"}>
-          {messages.map((m, i) => (
-            <Card key={i}>{m}</Card>
-          ))}
+            </div>
+            <Flex direction="column" className="w-full h-full">
+              <Heading>
+                Internal Thoughts <small>(Newest First)</small>
+              </Heading>
+              <ScrollArea className="h-full w-full border border-solid border-black rounded-sm">
+                <Flex direction={"column-reverse"} gap={"3"}>
+                  {thoughts.map((t, i) => (
+                    <Card
+                      key={i}
+                      className={
+                        i == thoughts.length - 1 ? "animate-pulse" : ""
+                      }
+                    >
+                      {t}
+                    </Card>
+                  ))}
+                </Flex>
+              </ScrollArea>
+            </Flex>
+          </Flex>
+          <ObservationCard
+            isStreaming={isStreaming}
+            peopleEmotions={peopleEmotions}
+            peopleFaces={peopleFaces}
+            peopleInfo={peopleInfo}
+            peoplePose={peoplePose}
+            mostRecentUtterance={mostRecentUtterance}
+          />
+          <Flex className="w-full" justify={"center"} gap="3" m="3">
+            <Button
+              onClick={startStreaming}
+              disabled={isStreaming}
+              variant="surface"
+            >
+              Start
+            </Button>
+            <Button
+              onClick={stopStreaming}
+              disabled={!isStreaming}
+              variant="surface"
+            >
+              Stop
+            </Button>
+          </Flex>
+          <Flex direction={"column"} gap="3">
+            {messages.map((m, i) => (
+              <Card key={i}>{m}</Card>
+            ))}
+          </Flex>
         </Flex>
       </Container>
     </div>

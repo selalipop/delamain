@@ -22,6 +22,7 @@ async function fetchTTS(text: string, voiceId: string): Promise<string> {
 export async function playTextToSpeech(text: string, voiceId: string) {
     try {
         const audioUrl = await fetchTTS(text, voiceId);
+        console.log('Playing TTS:', audioUrl);
         const audio = new Audio(audioUrl);
         audio.play();
     } catch (error) {
