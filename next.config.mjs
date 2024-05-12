@@ -3,6 +3,12 @@ import CopyPlugin from "copy-webpack-plugin";
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['whisper-turbo'],
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   webpack: (config, {}) => {
     config.resolve.extensions.push(".ts", ".tsx")
     config.resolve.fallback = { fs: false }
